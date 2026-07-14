@@ -1,18 +1,18 @@
 # LocalJob samples
 
-Three identical workers, zero infrastructure. Every worker runs every job on its own schedule — that is
-the point of LocalJob. Contrast with [SingletonJob](https://github.com/haiilong/SingletonJob), where only
-the elected leader would tick.
+Three identical workers and nothing else to install. Every worker runs every job on its own schedule,
+which is the point of LocalJob. Contrast with [SingletonJob](https://github.com/haiilong/SingletonJob),
+where only the elected leader would tick.
 
 ## Jobs in this sample
 
 | Job               | Type       | Schedule                                    | Extras demonstrated |
 |-------------------|------------|---------------------------------------------|---------------------|
 | `HeartbeatJob`    | interval   | every 1 second (run, then wait)             | runs on startup (interval default); default `JobName` |
-| `MetricsFlushJob` | fixed-rate | every 500 ms (skip if previous in flight)   | `ExecutionTimeout` of 5 s via `ConfigureJobOptions` |
+| `MetricsFlushJob` | fixed-rate | every 500 ms (skip if previous in flight)   | `ExecutionTimeout` of 5 s and `CancelWhenDisabled` via `ConfigureJobOptions` |
 | `TempCleanupJob`  | cron       | `0 3 * * *` UTC (03:00 daily)               | `RunOnStartup = true` via `ConfigureJobOptions`, `MisfirePolicy.FireOnce` |
 
-None of the jobs override `JobName` — the class name is the job name — and `Program.cs` contains nothing but `AddLocalJobs()`: each job configures itself in `ConfigureJobOptions`.
+None of the jobs override `JobName` (the class name is the job name), and `Program.cs` contains nothing but `AddLocalJobs()`. Each job configures itself in `ConfigureJobOptions`.
 
 The sample also sets a project-wide `Jitter` of 2 seconds, so the three workers' schedules are visibly
 offset from each other instead of firing in lockstep.
@@ -32,7 +32,7 @@ docker ps
 docker kill <container>
 ```
 
-The other two are completely unaffected — there is nothing to fail over, because nothing is shared.
+The other two are completely unaffected. There is nothing to fail over, because nothing is shared.
 
 ## Run locally on Windows (no Docker)
 
@@ -40,7 +40,7 @@ The other two are completely unaffected — there is nothing to fail over, becau
 .\run-3-instances.ps1
 ```
 
-Three pwsh windows open, all ticking. No Redis, no database, nothing to install.
+Three pwsh windows open, all ticking. There is nothing to install first, since LocalJob needs no backend.
 
 ## What to look for in logs
 

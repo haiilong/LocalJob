@@ -5,7 +5,7 @@ Quick links:
 | Document | Topic |
 |---|---|
 | [getting-started.md](getting-started.md) | Install, first job, first multi-instance run |
-| [configuration.md](configuration.md) | Every option, per-job overrides, environment variables |
+| [configuration.md](configuration.md) | Every option, per-job configuration, environment variables |
 | [architecture.md](architecture.md) | The two loops, cancellation sources, jitter mechanics |
 | [aot.md](aot.md) | NativeAOT and trimming, source generator details |
 | [deployment-kubernetes.md](deployment-kubernetes.md) | Per-pod semantics, rolling deploys, SIGTERM behavior |

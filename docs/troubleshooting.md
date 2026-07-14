@@ -2,11 +2,11 @@
 
 ## "My job runs N times, once per pod"
 
-That is the contract: LocalJob runs on **every** instance. If exactly one instance should run the job, you want [SingletonJob](https://github.com/haiilong/SingletonJob) (same API shape, Redis-backed leader election). The two libraries coexist happily in one host — register per-instance chores with `AddLocalJobs` and global jobs with `AddSingletonJobs`.
+That is the contract: LocalJob runs on **every** instance. If exactly one instance should run the job, you want [SingletonJob](https://github.com/haiilong/SingletonJob), which has the same API shape but does Redis-backed leader election. The two libraries coexist happily in one host, so register per-instance chores with `AddLocalJobs` and global jobs with `AddSingletonJobs`.
 
 ## "All my pods hit the database at the same instant"
 
-Expected for identical replicas on identical schedules — and exactly what `Jitter` is for:
+Expected for identical replicas on identical schedules. This is what `Jitter` is for:
 
 ```json
 { "LocalJob": { "Jitter": "00:00:05" } }
@@ -18,10 +18,10 @@ Interval and fixed-rate jobs draw one random offset per process; cron jobs draw 
 
 Check it isn't disabled:
 
-1. **Statically disabled.** `LocalJob:Enabled` is `false` in config, or the class sets `o.Enabled = false` in its `ConfigureJobOptions`. The job logs `Job {JobName} is disabled by configuration` once at startup and then idles.
-2. **Dynamically disabled.** The job overrides `IsJobEnabledAsync` and the flag source returns false. Look for `Job {JobName} is now DISABLED` (`Information`).
-3. **The loop died at startup.** A zero/negative `GetJobInterval()` or a cron with no future occurrences stops the loop with an `Error`/`Warning` log line. Search the logs for the job name.
-4. **Waiting out its first schedule slot.** Fixed-rate and cron jobs do not run at startup by default; a daily cron fires at the next wall-clock occurrence, which may be hours away. Set `RunOnStartup = true` if you expected a boot run.
+1. Statically disabled: `LocalJob:Enabled` is `false` in config, or the class sets `o.Enabled = false` in its `ConfigureJobOptions`. The job logs `Job {JobName} is disabled by configuration` once at startup and then idles.
+2. Dynamically disabled: the job overrides `IsJobEnabledAsync` and the flag source returns false. Look for `Job {JobName} is now DISABLED` (`Information`).
+3. The loop died at startup: a zero or negative `GetJobInterval()`, or a cron with no future occurrences, stops the loop with an `Error` or `Warning` log line. Search the logs for the job name.
+4. It is still waiting for its first slot: fixed-rate and cron jobs do not run at startup by default, and a daily cron fires at the next wall-clock occurrence, which may be hours away. Set `RunOnStartup = true` if you expected a boot run.
 
 ## "My job ran at deploy time and I didn't expect it"
 
@@ -39,7 +39,17 @@ Set an `ExecutionTimeout`; the iteration's token fires when the bound is hit, a 
 protected override void ConfigureJobOptions(LocalJobOptions o) => o.ExecutionTimeout = TimeSpan.FromMinutes(1);
 ```
 
-Cancellation is cooperative — the timeout only helps if `ExecuteJobAsync` passes its token to the things it awaits. A truly stuck synchronous call is not aborted; the `Warning` still fires, telling you where to look.
+Cancellation is cooperative, so the timeout only helps if `ExecuteJobAsync` passes its token to the things it awaits. A truly stuck synchronous call is not aborted, but the `Warning` still fires and tells you where to look.
+
+## "My cron job logs 'missed scheduled time'"
+
+A misfire: the occurrence passed while the previous run (or a pending jitter delay) was still in flight, or the process was suspended. The default policy drops the missed occurrence and resumes at the next future one, which is usually right for frequent schedules. For hourly or daily jobs where running late beats not running, switch the policy:
+
+```csharp
+protected override CronMisfirePolicy MisfirePolicy => CronMisfirePolicy.FireOnce;
+```
+
+If the warnings are frequent, the job's runtime (or its `Jitter`) is too close to the cron period. See [configuration.md](configuration.md#cron-misfire-policy).
 
 ## "Per-iteration logs are missing"
 

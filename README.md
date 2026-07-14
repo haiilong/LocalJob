@@ -1,6 +1,6 @@
 # LocalJob
 
-Lightweight in-memory recurring background jobs for .NET: interval, fixed-rate (drop-on-overlap), and cron schedules that run on **every instance** of your app. No Redis, no database, no coordination. The per-replica counterpart to [SingletonJob](https://github.com/haiilong/SingletonJob), with the same API shape.
+Lightweight in-memory recurring background jobs for .NET: interval, fixed-rate (drop-on-overlap), and cron schedules that run on **every instance** of your app. There is no Redis and no coordination of any kind. This is the per-replica counterpart to [SingletonJob](https://github.com/haiilong/SingletonJob), with the same API shape.
 
 [![NuGet](https://img.shields.io/nuget/v/LocalJob.svg)](https://www.nuget.org/packages/LocalJob/)
 [![Build](https://github.com/haiilong/LocalJob/actions/workflows/ci.yml/badge.svg)](https://github.com/haiilong/LocalJob/actions/workflows/ci.yml)
@@ -8,14 +8,14 @@ Lightweight in-memory recurring background jobs for .NET: interval, fixed-rate (
 
 ## Why this exists
 
-Some background work belongs to *the process*, not to *the deployment*: flushing a local metrics buffer, trimming this pod's temp directory, pinging a keep-alive, draining an in-memory queue. Deploy 5 replicas and all 5 must run it — coordinating them through Redis would be exactly wrong.
+Some background work belongs to the process, not to the deployment. Flushing a local metrics buffer, trimming this pod's temp directory, sending a keep-alive. If you deploy 5 replicas, all 5 must do it, and coordinating them through Redis would be exactly wrong.
 
-You can hand-roll a `BackgroundService` with a `while`/`Task.Delay` loop for each of these, but then every service reinvents the same details: overlap protection, cron parsing, misfire handling, graceful shutdown, error handling that doesn't kill the loop, per-job configuration, and testable time. `LocalJob` packages those once, behind the same job shapes and registration as `SingletonJob`, plus the features that only matter when N uncoordinated replicas run the same schedule:
+The usual answer is a hand-rolled `BackgroundService` with a `while` loop and `Task.Delay`. That works, until you have five of them and each one handles overlap protection, cron parsing, misfires, graceful shutdown, and error handling slightly differently (or not at all). LocalJob packages that once, behind the same job shapes and registration as SingletonJob. It also adds the things that only matter when N uncoordinated replicas run the same schedule:
 
-- **Jitter** — N pods deployed together otherwise execute the same schedule in lockstep and stampede your database. One config value desynchronizes the fleet.
-- **RunOnStartup** — explicit, per-shape-defaulted control over whether a job fires immediately at boot or waits for its first scheduled slot.
-- **ExecutionTimeout** — a runaway iteration is cancelled instead of silently wedging the schedule.
-- **Live enable/disable** — a feature-flag hook re-evaluated on a fixed cadence, with optional cancellation of in-flight work.
+- Jitter, because N pods deployed together will otherwise hit your database in lockstep, forever.
+- `RunOnStartup`, so whether a job fires at boot is an explicit decision instead of an accident of the loop structure.
+- `ExecutionTimeout`, so a runaway iteration gets cancelled instead of silently wedging the schedule.
+- A live enable/disable hook (`IsJobEnabledAsync`) for feature flags and ops kill switches.
 
 ## Which library do I need?
 
@@ -24,15 +24,17 @@ You can hand-roll a `BackgroundService` with a `while`/`Task.Delay` loop for eac
 | Who runs the job                 | **every** replica               | exactly **one** replica (leader election) |
 | Backend                          | none (in-memory)                | Redis                                   |
 | Typical work                     | per-instance state: local caches, buffers, temp files, keep-alives | global work: reports, syncs, outbox sweeps |
-| Failover                         | not needed — nothing is shared  | automatic within seconds                |
-| Anti-stampede jitter             | yes (built in)                  | not needed — only one runs              |
+| Failover                         | not needed, nothing is shared   | automatic within seconds                |
+| Anti-stampede jitter             | yes (built in)                  | not needed, only one runs               |
 | Job shapes (interval / fixed-rate / cron) | yes / yes / yes        | yes / yes / yes                         |
 | Registration                     | `AddLocalJobs()` (source-generated) | `AddSingletonJobs()` (source-generated) |
 | AOT compatibility                | yes                             | yes                                     |
 
-Sibling package: [RefreshAhead.MemoryCache](https://github.com/haiilong/RefreshAhead.MemoryCache) — when the per-instance work is specifically "refresh an in-memory cache and expose a snapshot", use that instead; it owns the cache-shaped API.
+Most real services have both kinds of work, and the two libraries coexist fine in one host.
 
-And versus [Hangfire](https://www.hangfire.io/): same trade as SingletonJob — no persistence, no retries, no dashboard, first-class sub-second schedules, drop-on-overlap semantics, tiny dependency graph, AOT-safe.
+One more sibling: [RefreshAhead.MemoryCache](https://github.com/haiilong/RefreshAhead.MemoryCache). When the per-instance work is specifically "refresh an in-memory cache and expose a snapshot", use that instead, since it owns the cache-shaped API.
+
+Compared to [Hangfire](https://www.hangfire.io/), the trade is the same one SingletonJob makes: you give up persistence, retries, and the dashboard, and you get sub-second schedules, drop-on-overlap semantics, a tiny dependency graph, and AOT safety.
 
 ## Install
 
@@ -40,7 +42,7 @@ And versus [Hangfire](https://www.hangfire.io/): same trade as SingletonJob — 
 dotnet add package LocalJob
 ```
 
-Targets `net8.0` and `net10.0` (If you use `net9.0` then it's the same as `net8.0`).
+Targets `net8.0` and `net10.0` (if you use `net9.0` then it's the same as `net8.0`).
 
 ## Quickstart
 
@@ -61,7 +63,7 @@ await builder.Build().RunAsync();
 >
 > **First build required.** Until the generator runs at least once, your IDE will red-squiggle the call with `CS1061: 'IServiceCollection' does not contain a definition for 'AddLocalJobs'`. Run `dotnet build` once and the symbol resolves. See [docs/troubleshooting.md](docs/troubleshooting.md) if it still doesn't.
 
-`appsettings.json` (everything optional — LocalJob works with zero configuration):
+`appsettings.json` is optional; LocalJob works with zero configuration:
 
 ```json
 {
@@ -105,7 +107,7 @@ public sealed class TempCleanupJob(IOptions<LocalJobOptions> o, ILogger<TempClea
 }
 ```
 
-No names, no per-job registration: `JobName` defaults to the class name (override it if you want a stable name that survives renames), and each class configures itself. Deploy N replicas. All N run the jobs — each on its own jitter-offset schedule.
+Notice what's missing: there are no job names to invent and nothing to add to `Program.cs` beyond `AddLocalJobs()`. `JobName` defaults to the class name (override it if you want a stable name that survives renames), and each class configures itself. Deploy N replicas and all N run the jobs, each on its own jitter-offset schedule.
 
 ## RunOnStartup
 
@@ -117,7 +119,7 @@ No names, no per-job registration: `JobName` defaults to the class name (overrid
 | `LocalFixedRateJob`| `false` | The tick grid starts one period after boot; an extra boot run would break the rate. |
 | `LocalCronJob`     | `false` | Cron means "at these wall-clock times", not "and also whenever we deploy". |
 
-Override it at any of three levels:
+You can override it at three levels:
 
 ```csharp
 // soft default for one job class (configuration can still override it):
@@ -134,16 +136,13 @@ protected override void ConfigureJobOptions(LocalJobOptions o) => o.RunOnStartup
 
 ## Jitter: don't stampede your database
 
-Five replicas all restarting at deploy time, all running "every 30 s", hit your shared DB at the same instant, every 30 seconds, forever. Set a jitter:
+Picture five replicas restarting at deploy time, all running "every 30 seconds". They hit your shared database at the same instant, every 30 seconds, until the next deploy. Set a jitter:
 
 ```json
 { "LocalJob": { "Jitter": "00:00:05" } }
 ```
 
-Each replica draws a uniformly random delay in `[0, Jitter)`:
-
-- **interval / fixed-rate** — drawn once at startup, permanently offsetting that replica's schedule;
-- **cron** — drawn fresh before every occurrence (all replicas share the same wall-clock fire times, so a one-time offset wouldn't help).
+Each replica draws a uniformly random delay in `[0, Jitter)`. Interval and fixed-rate jobs draw once at startup, which permanently offsets that replica's schedule. Cron jobs draw fresh before every occurrence, because all replicas share the same wall-clock fire times and a one-time offset wouldn't help.
 
 Keep the jitter well below the schedule period. Zero (the default) disables it.
 
@@ -158,11 +157,11 @@ Keep the jitter well below the schedule period. Zero (the default) disables it.
 | `CancelWhenDisabled`    | `false`    | Fire the iteration's token when the live flag turns off mid-run.            |
 | `EnabledPollingInterval`| `00:00:05` | How often `IsJobEnabledAsync` is re-evaluated.                              |
 
-No option is required: `AddLocalJobs()` with zero configuration is valid. Validation runs at host start; bad values throw `OptionsValidationException` before any job ticks. Per-job settings live on the job class itself — override `ConfigureJobOptions`, which runs after configuration and wins. See [docs/configuration.md](docs/configuration.md).
+No option is required, so `AddLocalJobs()` with zero configuration is valid. Validation runs at host start; bad values throw `OptionsValidationException` before any job ticks. Per-job settings live on the job class itself: override `ConfigureJobOptions`, which runs after configuration and wins. See [docs/configuration.md](docs/configuration.md).
 
 ## Disabling jobs
 
-Two mechanisms, layered — identical to SingletonJob:
+Two mechanisms, layered, same as SingletonJob:
 
 ```csharp
 // Static (evaluated once at startup):
@@ -182,7 +181,9 @@ public sealed class MetricsFlushJob(
 }
 ```
 
-The flag is evaluated per replica, so a canary rollout can disable a job on one pod only. Set `CancelWhenDisabled = true` to also cancel an iteration already in flight when the flag flips. See [docs/configuration.md](docs/configuration.md#disabling-jobs).
+The static switch is handy per environment: put `"LocalJob": { "Enabled": false }` in `appsettings.Staging.json` (or set `LocalJob__Enabled=false`) and staging runs no jobs at all.
+
+The live flag is evaluated per replica, so a canary rollout can disable a job on one pod only. Set `CancelWhenDisabled = true` to also cancel an iteration already in flight when the flag flips. See [docs/configuration.md](docs/configuration.md#disabling-jobs).
 
 ## Logging levels
 
@@ -195,14 +196,14 @@ The flag is evaluated per replica, so a canary rollout can disable a job on one 
 
 Per-iteration noise is at Debug on purpose. High-frequency jobs would otherwise flood Information logs.
 
-> **Inside a job, log via the inherited `Logger` field — not the constructor parameter.** The base class already stores the logger in a `protected ILogger Logger`. Forwarding `logger` to `base(...)` *and* referencing it from your primary-constructor body creates a second backing field for the same value, which trips compiler warning [**CS9124**](docs/troubleshooting.md#cs9124-parameter-logger-is-captured-into-the-state-of-the-enclosing-type). Use `Logger.LogInformation(...)` (or a `[LoggerMessage]` static partial that takes `ILogger`, passed `Logger`) instead.
+> **Inside a job, log via the inherited `Logger` field, not the constructor parameter.** The base class already stores the logger in a `protected ILogger Logger`. Forwarding `logger` to `base(...)` *and* referencing it from your primary-constructor body creates a second backing field for the same value, which trips compiler warning [**CS9124**](docs/troubleshooting.md#cs9124-parameter-logger-is-captured-into-the-state-of-the-enclosing-type). Use `Logger.LogInformation(...)` (or a `[LoggerMessage]` static partial that takes `ILogger`, passed `Logger`) instead.
 
 ## Documentation
 
 | | |
 |---|---|
 | [docs/getting-started.md](docs/getting-started.md) | Install + first three jobs |
-| [docs/configuration.md](docs/configuration.md) | Every option, per-job overrides |
+| [docs/configuration.md](docs/configuration.md) | Every option, per-job configuration |
 | [docs/architecture.md](docs/architecture.md) | The two loops, cancellation sources, jitter mechanics |
 | [docs/aot.md](docs/aot.md) | NativeAOT + trimming, source generator details |
 | [docs/deployment-kubernetes.md](docs/deployment-kubernetes.md) | Per-pod semantics, rolling deploys, SIGTERM |
@@ -218,7 +219,7 @@ cd samples
 docker compose up --build --scale worker=3
 ```
 
-All three workers tick — offset from each other by the sample's 2-second jitter.
+All three workers tick, offset from each other by the sample's 2-second jitter.
 
 ## Roadmap
 

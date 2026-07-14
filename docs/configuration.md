@@ -11,7 +11,7 @@
 | `CancelWhenDisabled` | `bool` | `false` | When `true`, the token passed to `ExecuteJobAsync` also fires if the live flag flips to disabled mid-iteration. Default `false`: a started iteration runs to completion. |
 | `EnabledPollingInterval` | `TimeSpan` | `00:00:05` | How often `IsJobEnabledAsync` is re-evaluated. Must be positive. |
 
-No option is required — `AddLocalJobs()` with zero configuration is valid.
+No option is required, so `AddLocalJobs()` with zero configuration is valid.
 
 `appsettings.json`:
 
@@ -25,11 +25,13 @@ No option is required — `AddLocalJobs()` with zero configuration is valid.
 }
 ```
 
+The section binds to every job in the project. All of it also works as environment variables (`LocalJob__Jitter=00:00:02`), which is usually the more convenient knob in Kubernetes.
+
 Validation is wired through `IValidateOptions<LocalJobOptions>`. A tiny hosted service resolves `IOptions<LocalJobOptions>.Value` at host start, so bad base config throws `OptionsValidationException` before any job iteration runs. Each job's own `ConfigureJobOptions` result is re-validated during that job's `StartAsync`; the error message is prefixed with `[Job: name]` so you can see which class is at fault.
 
 ## Job identity: `JobName`
 
-`JobName` defaults to the class name (`GetType().Name`) — most jobs never touch it. It appears in every log line the library writes and feeds the duplicate-name startup guard. Override it for a stable name that survives class renames, or to disambiguate two job classes that share a simple name across namespaces:
+`JobName` defaults to the class name (`GetType().Name`), and most jobs never touch it. It appears in every log line the library writes and feeds the duplicate-name startup guard. Override it if you want a stable name that survives class renames, or to disambiguate two job classes that share a simple name across namespaces:
 
 ```csharp
 public override string JobName => "temp-cleanup";
@@ -37,7 +39,7 @@ public override string JobName => "temp-cleanup";
 
 ## Per-job configuration: `ConfigureJobOptions`
 
-Per-job settings live **on the job class**, not in `Program.cs`. Override `ConfigureJobOptions`; it receives the job's private copy of the options and runs **last**, after `appsettings.json`:
+Per-job settings live on the job class, not in `Program.cs`. Override `ConfigureJobOptions`; it receives the job's private copy of the options and runs last, after `appsettings.json`:
 
 ```csharp
 public sealed class TempCleanupJob(IOptions<LocalJobOptions> o, ILogger<TempCleanupJob> l)
@@ -55,17 +57,17 @@ public sealed class TempCleanupJob(IOptions<LocalJobOptions> o, ILogger<TempClea
 Order of application:
 1. Defaults from `new LocalJobOptions()`.
 2. The `LocalJob` config section (project-wide; ops can tune it per environment without a code change).
-3. `ConfigureJobOptions` on the class — the last word.
+3. `ConfigureJobOptions` on the class. This is the last word.
 
-So the class only sets the values it insists on; everything else stays ops-tunable. Because the hook runs last, anything you set here **cannot** be overridden at deploy time — for values that should stay tunable, leave them unset and rely on the config section. Environment-dependent decisions are fine: the job is a normal DI service, so inject `IHostEnvironment` (or anything else) and consult it inside the hook.
+The class should only set values it insists on. Because the hook runs last, anything you set here cannot be changed at deploy time, so leave ops-tunable values unset and let the config section carry them. Environment-dependent decisions are fine: the job is a normal DI service, so inject `IHostEnvironment` (or anything else) and consult it inside the hook.
 
-The resolved options are **frozen at `StartAsync`**. No live reload. Redeploy to pick up config changes. (For runtime toggling, see [Disabling jobs](#disabling-jobs).) The instance passed to `ConfigureJobOptions` is a private clone — mutating it never affects other jobs.
+The resolved options are frozen at `StartAsync`. There is no live reload; redeploy to pick up config changes. (For runtime toggling, see [Disabling jobs](#disabling-jobs).) The instance passed to `ConfigureJobOptions` is a private clone, so mutating it never affects other jobs.
 
 ## RunOnStartup
 
 Whether a job fires one iteration immediately at boot, before its regular schedule takes over. Three levels, most specific wins:
 
-1. **Shape default** (used when nothing else is set):
+1. Shape default, used when nothing else is set:
 
    | Shape | Default | Rationale |
    |---|---|---|
@@ -73,13 +75,13 @@ Whether a job fires one iteration immediately at boot, before its regular schedu
    | `LocalFixedRateJob` | `false` | The tick grid starts one period after boot. |
    | `LocalCronJob` | `false` | Cron means "at these wall-clock times", not "and also at deploy time". |
 
-2. **Code-level *soft* default** for one job class — override the virtual; configuration can still override it:
+2. A soft code-level default for one job class. Override the virtual; configuration can still override it:
 
    ```csharp
    protected override bool DefaultRunOnStartup => true;
    ```
 
-3. **Explicit option** — beats the defaults above. Project-wide via `"LocalJob": { "RunOnStartup": ... }`, or pinned per job in the class (beats configuration too, since `ConfigureJobOptions` runs last):
+3. An explicit option value, which beats both defaults. Project-wide via `"LocalJob": { "RunOnStartup": ... }`, or pinned per job in the class (this beats configuration too, since `ConfigureJobOptions` runs last):
 
    ```csharp
    protected override void ConfigureJobOptions(LocalJobOptions o) => o.RunOnStartup = true;
@@ -87,11 +89,11 @@ Whether a job fires one iteration immediately at boot, before its regular schedu
 
    Rule of thumb: use `DefaultRunOnStartup` when ops should keep the final say, `ConfigureJobOptions` when the class insists.
 
-Semantics per shape when the resolved value is `true`:
+What `true` means per shape:
 
-- **interval** — unchanged (this is its default): run, then wait.
-- **fixed-rate** — one immediate run, then the normal tick grid. The immediate run counts for overlap protection: a tick arriving while it is still in flight is dropped.
-- **cron** — one immediate run, then the normal schedule. The startup run draws a jitter delay like any other occurrence.
+- interval: unchanged, this is its default. Run, then wait.
+- fixed-rate: one immediate run, then the normal tick grid. The immediate run counts for overlap protection, so a tick arriving while it is still in flight is dropped.
+- cron: one immediate run, then the normal schedule. The startup run draws a jitter delay like any other occurrence.
 
 When `false`, an interval job waits one full interval before its first run.
 
@@ -99,32 +101,32 @@ Mind the fleet: `RunOnStartup = true` on N replicas means N runs at every deploy
 
 ## Jitter
 
-Because every replica runs every job, N pods deployed together execute the same schedule in lockstep — and hit any shared resource (database, downstream API) at the same instant, forever. `Jitter` breaks the lockstep. Each replica draws a uniformly random delay in `[0, Jitter)`:
+Every replica runs every job, so N pods deployed together execute the same schedule in lockstep and hit any shared resource (database, downstream API) at the same instant, on every single occurrence. `Jitter` breaks the lockstep. Each replica draws a uniformly random delay in `[0, Jitter)`:
 
-- **interval / fixed-rate** — drawn **once at startup**; the replica's entire schedule is offset by that amount for the lifetime of the process. Different replicas draw different offsets, which is the point.
-- **cron** — drawn **fresh before every occurrence** (including a `RunOnStartup` run). Cron fire times are pinned to the wall clock, identical on every replica, so a one-time startup offset would not spread them; a per-occurrence draw does.
+- Interval and fixed-rate jobs draw once at startup. The replica's entire schedule is offset by that amount for the lifetime of the process, and each replica draws its own offset, so the fleet stays spread out.
+- Cron jobs draw fresh before every occurrence (including a `RunOnStartup` run). Cron fire times are pinned to the wall clock and identical on every replica, so a one-time startup offset would not spread them; a per-occurrence draw does.
 
 Guidelines:
 
 - Keep `Jitter` well below the schedule period. For a cron job, an occurrence that passes while a jitter delay is still pending is treated as a misfire and handled by the [misfire policy](#cron-misfire-policy).
-- `Jitter` delays the *start* of work; it never skips work.
+- `Jitter` delays the start of work; it never skips work.
 - Zero (the default) disables it. There is deliberately no default jitter: whether lockstep matters depends on what the job touches, and silently delaying every user's job would violate least surprise.
 
 ## ExecutionTimeout
 
-An upper bound on a single iteration. When the bound is hit, the `CancellationToken` passed to `ExecuteJobAsync` fires, the event logs at `Warning`, and the schedule continues with the next iteration — a runaway iteration no longer wedges the job forever.
+An upper bound on a single iteration. When the bound is hit, the `CancellationToken` passed to `ExecuteJobAsync` fires, the event logs at `Warning`, and the schedule continues with the next iteration. A runaway iteration can no longer wedge the job forever.
 
 ```csharp
 protected override void ConfigureJobOptions(LocalJobOptions o) => o.ExecutionTimeout = TimeSpan.FromSeconds(5);
 ```
 
-Cancellation is cooperative: a job that never observes its token is *requested* to stop, not forcibly aborted. Pass the token to everything awaitable inside `ExecuteJobAsync`.
+Cancellation is cooperative: a job that never observes its token is asked to stop, not forcibly aborted. Pass the token to everything awaitable inside `ExecuteJobAsync`.
 
-Interaction with the shapes:
+How it interacts with each shape:
 
-- **interval** — the next wait starts when the cancelled iteration actually returns.
-- **fixed-rate** — ticks that arrive while the timed-out iteration is still (not yet) honoring its token are dropped, as usual.
-- **cron** — the next occurrence is evaluated after the iteration returns; a long overrun becomes a misfire, handled by the policy.
+- interval: the next wait starts when the cancelled iteration actually returns.
+- fixed-rate: ticks that arrive while the timed-out iteration has not yet honored its token are dropped, as usual.
+- cron: the next occurrence is evaluated after the iteration returns; a long overrun becomes a misfire, handled by the policy.
 
 ## Disabling jobs
 
@@ -139,6 +141,8 @@ Project level, disabling every job in the deployment:
   "LocalJob": { "Enabled": false }
 }
 ```
+
+This is the standard way to keep jobs off in a whole environment. Put it in `appsettings.Staging.json`, or set the environment variable `LocalJob__Enabled=false` on the staging deployment, and staging runs no jobs.
 
 Job level, on the class (typically behind an environment check):
 
@@ -171,9 +175,9 @@ public sealed class MetricsFlushJob(
 
 Semantics:
 
-- The enablement loop calls `IsJobEnabledAsync` once per `EnabledPollingInterval` (default 5 s), so a flag flip takes effect within one interval. The job loops check the cached `IsEnabled` before each iteration, so no extra load is put on your flag backend by high-frequency jobs.
-- The flag is evaluated **per replica**: a canary rollout can disable the job on one pod while the rest keep running. (There is no lock to hand over — every replica decides only for itself.)
-- An iteration already in flight when the flag flips is not cancelled by default; set `CancelWhenDisabled = true` to cancel it through its token.
+- The enablement loop calls `IsJobEnabledAsync` once per `EnabledPollingInterval` (default 5 s), so a flag flip takes effect within one interval. The job loops check the cached `IsEnabled` before each iteration, which keeps high-frequency jobs from hammering your flag backend.
+- The flag is evaluated per replica: a canary rollout can disable the job on one pod while the rest keep running. There is no lock to hand over; every replica decides only for itself.
+- An iteration already in flight when the flag flips is not cancelled by default. Set `CancelWhenDisabled = true` to cancel it through its token.
 - If your override throws, the error is logged at `Warning` and the previous state is kept, so a flaky flag backend does not flap the job.
 - `Options.Enabled = false` short-circuits everything: `IsJobEnabledAsync` is never called.
 
@@ -199,7 +203,7 @@ public sealed class TempCleanupJob : LocalCronJob
 
 Misfires under `Skip` and `FireOnce` log at `Warning`; under `CatchUp` each replay logs at `Debug` to avoid log storms after a long gap.
 
-Note the scope: each replica evaluates its own schedule, so the policy also applies per replica. An occurrence missed because a *particular* pod was down is caught up (or skipped) by that pod alone when it restarts — the others were never affected.
+One scope note: each replica evaluates its own schedule, so the policy also applies per replica. An occurrence missed because a particular pod was down is caught up (or skipped) by that pod alone when it restarts. The other pods were never affected.
 
 ## Logging levels
 

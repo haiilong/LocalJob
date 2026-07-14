@@ -5,7 +5,7 @@
 
     <PackageId>LocalJob</PackageId>
     <Version>1.0.0</Version>
-    <Description>Lightweight in-memory recurring background jobs for .NET: interval, fixed-rate (drop-on-overlap), and cron schedules that run on every instance of your app. No Redis, no database, no coordination. Built-in startup jitter to desynchronize replicas, run-on-startup control, execution timeouts, and live enable/disable. AOT-friendly via bundled source generator. The per-replica counterpart to SingletonJob.</Description>
+    <Description>Lightweight in-memory recurring background jobs for .NET: interval, fixed-rate (drop-on-overlap), and cron schedules that run on every instance of your app, without Redis or any other backend. Built-in jitter to desynchronize replicas, run-on-startup control, execution timeouts, and live enable/disable. AOT-friendly via bundled source generator. The per-replica counterpart to SingletonJob.</Description>
     <PackageTags>background-job;hosted-service;in-memory;cron;periodic;fixed-rate;scheduler;jitter;worker;aot</PackageTags>
     <PackageReleaseNotes>https://github.com/haiilong/LocalJob/blob/main/CHANGELOG.md</PackageReleaseNotes>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

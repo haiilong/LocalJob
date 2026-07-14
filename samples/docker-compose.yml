@@ -1,0 +1,10 @@
+services:
+  worker:
+    build:
+      context: ..
+      dockerfile: samples/LocalJob.Sample/Dockerfile
+    environment:
+      - DOTNET_ENVIRONMENT=Production
+      - LocalJob__Jitter=00:00:02
+    deploy:
+      replicas: 3

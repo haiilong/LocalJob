@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/LocalJob.Sample/LocalJob.Sample.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/LocalJob.Tests/LocalJob.Tests.csproj" />
+  </Folder>
+  <Project Path="src/LocalJob.SourceGenerator/LocalJob.SourceGenerator.csproj" />
+  <Project Path="src/LocalJob/LocalJob.csproj" />
+</Solution>

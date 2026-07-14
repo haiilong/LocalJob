@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  pack-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required for OIDC
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Derive version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - run: dotnet restore src/LocalJob/LocalJob.csproj
+      - run: dotnet build  src/LocalJob/LocalJob.csproj -c Release --no-restore /p:Version=${{ steps.version.outputs.version }}
+      - run: dotnet pack   src/LocalJob/LocalJob.csproj -c Release --no-build -o artifacts /p:Version=${{ steps.version.outputs.version }}
+
+      - name: Login to NuGet (OIDC)
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: haiilong
+
+      - name: Push to NuGet
+        run: >
+          dotnet nuget push "artifacts/*.nupkg"
+          --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}"
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: nupkg
+          path: artifacts/*
